@@ -1,5 +1,6 @@
 // Firebase config and initialization
-const firebaseConfig = {
+// Load config from config.js (which handles environment variables)
+const firebaseConfig = window.firebaseConfig || {
   apiKey: "AIzaSyBgfjHkHWXa-J6DWHQX224XKbw3XGUVUfQ",
   authDomain: "jak-stationary.firebaseapp.com",
   projectId: "jak-stationary",
@@ -102,6 +103,8 @@ function showMainApp() {
     userSalesNav.classList.add('d-none');
     document.getElementById('adminUsersCard').style.display = '';
     document.getElementById('addItemBtn').classList.remove('d-none'); // Show Add Item button for admin
+    document.getElementById('exportItemsBtn').classList.remove('d-none'); // Show Export Items button for admin
+    document.getElementById('exportSalesBtn').classList.remove('d-none'); // Show Export Sales button for admin
   } else {
     adminUsersNav.classList.add('d-none');
     adminNotificationsNav.classList.add('d-none');
@@ -109,6 +112,8 @@ function showMainApp() {
     userSalesNav.classList.remove('d-none');
     document.getElementById('adminUsersCard').style.display = 'none';
     document.getElementById('addItemBtn').classList.add('d-none'); // Hide Add Item button for users
+    document.getElementById('exportItemsBtn').classList.add('d-none'); // Hide Export Items button for users
+    document.getElementById('exportSalesBtn').classList.add('d-none'); // Hide Export Sales button for users
   }
   
   updateDashboard();
@@ -829,4 +834,129 @@ function createToastContainer() {
   container.style.zIndex = '1055';
   document.body.appendChild(container);
   return container;
+}
+
+// Export functions for admin
+async function exportItems() {
+  if (!isAdmin) {
+    showToast('Only admin can export data', 'error');
+    return;
+  }
+  
+  try {
+    const itemsSnap = await db.collection('items').get();
+    let items = [];
+    
+    itemsSnap.forEach(doc => {
+      items.push({ id: doc.id, ...doc.data() });
+    });
+    
+    // Sort by date
+    items.sort((a, b) => {
+      if (a.createdAt && b.createdAt) {
+        return b.createdAt.seconds - a.createdAt.seconds;
+      }
+      return 0;
+    });
+    
+    // Calculate sales for each item
+    for (let item of items) {
+      const salesSnap = await db.collection('sales')
+        .where('itemId', '==', item.id)
+        .get();
+      
+      let totalSold = 0;
+      salesSnap.forEach(doc => {
+        totalSold += doc.data().quantity;
+      });
+      
+      item.totalSold = totalSold;
+      item.itemsLeft = item.quantity - totalSold;
+    }
+    
+    // Create CSV content
+    let csvContent = 'Item Name,Quantity,Price,Posted By,Date,Total Sold,Items Left\n';
+    
+    items.forEach(item => {
+      const date = item.createdAt ? new Date(item.createdAt.seconds*1000).toLocaleDateString() : '';
+      csvContent += `"${item.name}",${item.quantity},${item.price},"${item.userName}","${date}",${item.totalSold},${item.itemsLeft}\n`;
+    });
+    
+    // Download CSV file
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `items_inventory_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+    
+    showToast('Items exported successfully!', 'success');
+  } catch (error) {
+    console.error('Error exporting items:', error);
+    showToast('Failed to export items: ' + error.message, 'error');
+  }
+}
+
+async function exportSales() {
+  if (!isAdmin) {
+    showToast('Only admin can export data', 'error');
+    return;
+  }
+  
+  try {
+    const salesSnap = await db.collection('sales').get();
+    let sales = [];
+    
+    salesSnap.forEach(doc => {
+      sales.push({ id: doc.id, ...doc.data() });
+    });
+    
+    // Sort by date
+    sales.sort((a, b) => {
+      if (a.createdAt && b.createdAt) {
+        return b.createdAt.seconds - a.createdAt.seconds;
+      }
+      return 0;
+    });
+    
+    // Calculate totals
+    let totalRevenue = 0;
+    let totalItemsSold = 0;
+    sales.forEach(sale => {
+      totalRevenue += sale.quantity * sale.price;
+      totalItemsSold += sale.quantity;
+    });
+    
+    // Create CSV content with summary
+    let csvContent = `Sales Report - ${new Date().toLocaleDateString()}\n`;
+    csvContent += `Total Revenue: GH₵${totalRevenue.toFixed(2)}\n`;
+    csvContent += `Total Items Sold: ${totalItemsSold}\n`;
+    csvContent += `Total Sales: ${sales.length}\n\n`;
+    csvContent += 'Item Name,Quantity Sold,Price,Total,User,Date\n';
+    
+    sales.forEach(sale => {
+      const date = sale.createdAt ? new Date(sale.createdAt.seconds*1000).toLocaleString() : '';
+      const total = sale.quantity * sale.price;
+      csvContent += `"${sale.itemName}",${sale.quantity},${sale.price},${total},"${sale.userName}","${date}"\n`;
+    });
+    
+    // Download CSV file
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sales_report_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+    
+    showToast('Sales exported successfully!', 'success');
+  } catch (error) {
+    console.error('Error exporting sales:', error);
+    showToast('Failed to export sales: ' + error.message, 'error');
+  }
 } 
